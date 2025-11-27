@@ -250,6 +250,83 @@ async function recordLoginAttempt(connection, userId, ipAddress, status) {
 }
 
 // ========================
+// Patient Search API (ต้องอยู่ก่อน Error Handlers)
+// ========================
+app.post('/api/patients/search', async (req, res) => {
+    let connection;
+    
+    try {
+        const { patient_phone } = req.body;
+        
+        if (!patient_phone || patient_phone.trim() === '') {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'กรุณากรอกเบอร์โทรศัพท์' 
+            });
+        }
+
+        // ตรวจสอบรูปแบบเบอร์โทร
+        const phoneRegex = /^0[0-9]{9}$/;
+        if (!phoneRegex.test(patient_phone)) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'รูปแบบเบอร์โทรศัพท์ไม่ถูกต้อง' 
+            });
+        }
+
+        console.log('🔍 Searching for phone:', patient_phone);
+
+        connection = await createConnection();
+        
+        // ✅ ค้นหาด้วย MySQL
+        const [patients] = await connection.execute(
+            `SELECT 
+                patient_id,
+                CONCAT(first_name, ' ', last_name) as full_name,
+                phone_number,
+                date_of_birth,
+                gender,
+                id_card
+             FROM Patients 
+             WHERE phone_number = ?`,
+            [patient_phone]
+        );
+
+        if (patients.length === 0) {
+            return res.json({ 
+                success: false, 
+                message: 'ไม่พบข้อมูลผู้ป่วย' 
+            });
+        }
+
+        const patient = patients[0];
+        console.log('✅ Patient found:', patient.patient_id);
+
+        res.json({ 
+            success: true, 
+            patient: {
+                patient_id: patient.patient_id,
+                full_name: patient.full_name,
+                phone: patient.phone_number,
+                dateOfBirth: patient.date_of_birth,
+                gender: patient.gender,
+                id_card: patient.id_card
+            }
+        });
+
+    } catch (error) {
+        console.error('❌ Search error:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'เกิดข้อผิดพลาดในการค้นหา',
+            error: error.message 
+        });
+    } finally {
+        if (connection) await connection.end();
+    }
+});
+
+// ========================
 // Caregiver APIs
 // ========================
 
@@ -264,84 +341,58 @@ app.get('/api/caregiver/patients', authenticateToken, async (req, res) => {
         
         // Get caregiver's phone first
         const [users] = await connection.execute(
-            'SELECT phone, full_name FROM Users WHERE user_id = ?',
+            'SELECT phone FROM Users WHERE user_id = ?',
             [req.user.user_id]
         );
-        
+
         if (users.length === 0) {
             return res.status(404).json({
                 success: false,
                 message: 'ไม่พบข้อมูลผู้ใช้'
             });
         }
-        
+
         const caregiverPhone = users[0].phone;
-        const caregiverName = users[0].full_name;
         
-        console.log('📞 Caregiver phone:', caregiverPhone);
-        console.log('👤 Caregiver name:', caregiverName);
-        
-        // Try to get caregiver info (optional)
-        let caregiverId = null;
-        let relationship = null;
-        
-        try {
-            const [caregivers] = await connection.execute(
-                'SELECT caregiver_id, relationship FROM Caregivers WHERE user_id = ?',
-                [req.user.user_id]
-            );
-            
-            if (caregivers.length > 0) {
-                caregiverId = caregivers[0].caregiver_id;
-                relationship = caregivers[0].relationship;
-                console.log('✅ Caregiver record found:', caregiverId);
-            } else {
-                console.log('⚠️ No caregiver record, will search by phone only');
-            }
-        } catch (caregiverError) {
-            console.warn('⚠️ Caregivers table might not exist:', caregiverError.message);
-        }
-        
-        // Get patients with matching emergency contact
+        // Get patients using caregiver's phone
         const [patients] = await connection.execute(`
             SELECT 
-                p.*,
-                u.phone as user_phone,
-                u.full_name,
-                u.role
+                p.patient_id,
+                p.first_name,
+                p.last_name,
+                p.date_of_birth,
+                p.phone_number,
+                p.address,
+                c.relationship,
+                c.contact_name as caregiver_name,
+                DATE_FORMAT(p.date_of_birth, '%Y-%m-%d') as dob_formatted
             FROM Patients p
-            JOIN Users u ON p.user_id = u.user_id
-            WHERE p.emergency_contact_phone = ?
-            ORDER BY p.patient_id DESC
+            LEFT JOIN Caregivers c ON p.patient_id = c.patient_id
+            WHERE c.contact_phone = ?
+            ORDER BY p.first_name, p.last_name
         `, [caregiverPhone]);
-        
-        console.log(`✅ Found ${patients.length} patient(s) for caregiver: ${caregiverName}`);
-        
+
+        console.log(`✅ Found ${patients.length} patient(s) for caregiver`);
+
         res.json({
             success: true,
             data: patients,
-            caregiver_info: {
-                caregiver_id: caregiverId,
-                phone: caregiverPhone,
-                name: caregiverName,
-                relationship: relationship || 'ผู้ดูแล'
-            }
+            count: patients.length
         });
 
     } catch (error) {
         console.error('❌ Error fetching patients:', error);
         res.status(500).json({
             success: false,
-            message: 'เกิดข้อผิดพลาดในการดึงข้อมูลผู้ป่วย',
-            debug: process.env.NODE_ENV === 'development' ? error.message : undefined
+            message: 'เกิดข้อผิดพลาดในการดึงข้อมูลผู้ป่วย'
         });
     } finally {
         if (connection) await connection.end();
     }
 });
 
-// Get patient details
-app.get('/api/caregiver/patient/:patientId', authenticateToken, async (req, res) => {
+// Get patient dashboard
+app.get('/api/caregiver/patient/:patientId/dashboard', authenticateToken, async (req, res) => {
     let connection;
     
     try {
@@ -349,18 +400,18 @@ app.get('/api/caregiver/patient/:patientId', authenticateToken, async (req, res)
         
         connection = await createConnection();
         
-        // Get patient details
+        // Get patient info
         const [patients] = await connection.execute(`
             SELECT 
                 p.*,
-                u.phone,
-                u.full_name,
-                u.role
+                c.contact_name as caregiver_name,
+                c.relationship,
+                DATE_FORMAT(p.date_of_birth, '%Y-%m-%d') as dob_formatted
             FROM Patients p
-            JOIN Users u ON p.user_id = u.user_id
+            LEFT JOIN Caregivers c ON p.patient_id = c.patient_id
             WHERE p.patient_id = ?
         `, [patientId]);
-        
+
         if (patients.length === 0) {
             return res.status(404).json({
                 success: false,
@@ -368,16 +419,46 @@ app.get('/api/caregiver/patient/:patientId', authenticateToken, async (req, res)
             });
         }
 
+        // Get exercise stats
+        const [exerciseStats] = await connection.execute(`
+            SELECT 
+                COUNT(*) as total_sessions,
+                SUM(duration_minutes) as total_minutes,
+                AVG(duration_minutes) as avg_duration
+            FROM Exercise_Sessions
+            WHERE patient_id = ?
+            AND session_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+        `, [patientId]);
+
+        // Get recent exercises
+        const [recentExercises] = await connection.execute(`
+            SELECT 
+                es.*,
+                e.name_th as exercise_name,
+                e.name_en,
+                DATE_FORMAT(es.session_date, '%Y-%m-%d') as session_date_formatted,
+                DATE_FORMAT(es.session_date, '%H:%i') as session_time
+            FROM Exercise_Sessions es
+            JOIN Exercises e ON es.exercise_id = e.exercise_id
+            WHERE es.patient_id = ?
+            ORDER BY es.session_date DESC
+            LIMIT 5
+        `, [patientId]);
+
         res.json({
             success: true,
-            data: patients[0]
+            data: {
+                patient: patients[0],
+                stats: exerciseStats[0],
+                recent_exercises: recentExercises
+            }
         });
 
     } catch (error) {
-        console.error('❌ Error fetching patient details:', error);
+        console.error('❌ Error fetching dashboard:', error);
         res.status(500).json({
             success: false,
-            message: 'เกิดข้อผิดพลาดในการดึงข้อมูลผู้ป่วย'
+            message: 'เกิดข้อผิดพลาดในการดึงข้อมูล Dashboard'
         });
     } finally {
         if (connection) await connection.end();
@@ -394,12 +475,18 @@ app.get('/api/caregiver/patient/:patientId/exercises', authenticateToken, async 
         
         connection = await createConnection();
         
-        // Get exercise sessions
+        // ✅ แก้ไข SQL query - ใช้ connection.execute และแก้ชื่อ column
         const [exercises] = await connection.execute(`
             SELECT 
                 es.*,
-                e.exercise_name,
+                e.name_th as exercise_name,
+                e.name_en,
                 e.description,
+                e.angle_range,
+                e.hold_time,
+                e.repetitions,
+                e.sets,
+                e.rest_time,
                 DATE_FORMAT(es.session_date, '%Y-%m-%d') as session_date_formatted,
                 DATE_FORMAT(es.session_date, '%H:%i') as session_time
             FROM Exercise_Sessions es
@@ -546,7 +633,145 @@ app.get('/api/caregiver/patient/:patientId/notes', authenticateToken, async (req
 });
 
 // ========================
-// Error Handlers
+// Registration APIs
+// ========================
+
+// Register caregiver
+app.post('/api/register/caregiver', async (req, res) => {
+    let connection;
+    
+    try {
+        const { phone, password, contact_name, relationship, patient_id } = req.body;
+
+        // ตรวจสอบข้อมูลที่จำเป็น
+        if (!phone || !password || !contact_name || !relationship || !patient_id) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'กรุณากรอกข้อมูลให้ครบถ้วน' 
+            });
+        }
+
+        // ตรวจสอบรูปแบบเบอร์โทร
+        const phoneRegex = /^0[0-9]{9}$/;
+        if (!phoneRegex.test(phone)) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'รูปแบบเบอร์โทรศัพท์ไม่ถูกต้อง' 
+            });
+        }
+
+        connection = await createConnection();
+
+        // ตรวจสอบว่าเบอร์โทรซ้ำหรือไม่
+        const [existingUser] = await connection.execute(
+            'SELECT user_id FROM Users WHERE phone = ?',
+            [phone]
+        );
+
+        if (existingUser.length > 0) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'เบอร์โทรศัพท์นี้ถูกใช้งานแล้ว' 
+            });
+        }
+
+        // ตรวจสอบว่าผู้ป่วยมีอยู่จริง
+        const [patient] = await connection.execute(
+            'SELECT patient_id FROM Patients WHERE patient_id = ?',
+            [patient_id]
+        );
+
+        if (patient.length === 0) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'ไม่พบข้อมูลผู้ป่วย' 
+            });
+        }
+
+        // เข้ารหัสรหัสผ่าน
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        // เริ่ม Transaction
+        await connection.beginTransaction();
+
+        try {
+            // สร้างผู้ใช้ใหม่
+            const [userResult] = await connection.execute(
+                `INSERT INTO Users (phone, password_hash, role, created_at) 
+                 VALUES (?, ?, 'caregiver', NOW())`,
+                [phone, hashedPassword]
+            );
+
+            const userId = userResult.insertId;
+
+            // สร้างข้อมูลผู้ดูแล
+            await connection.execute(
+                `INSERT INTO Caregivers (user_id, patient_id, relationship, contact_name, contact_phone, is_external_contact) 
+                 VALUES (?, ?, ?, ?, ?, 0)`,
+                [userId, patient_id, relationship, contact_name, phone]
+            );
+
+            // Commit Transaction
+            await connection.commit();
+
+            res.json({ 
+                success: true, 
+                message: 'สมัครสมาชิกสำเร็จ',
+                user_id: userId
+            });
+
+        } catch (error) {
+            // Rollback ถ้าเกิดข้อผิดพลาด
+            await connection.rollback();
+            throw error;
+        }
+
+    } catch (error) {
+        console.error('❌ Registration error:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'เกิดข้อผิดพลาดในการสมัครสมาชิก',
+            error: error.message
+        });
+    } finally {
+        if (connection) await connection.end();
+    }
+});
+
+// Get patients list
+app.get('/api/patients/list', async (req, res) => {
+    let connection;
+    
+    try {
+        connection = await createConnection();
+        
+        const [patients] = await connection.execute(
+            `SELECT patient_id, 
+                    CONCAT(first_name, ' ', last_name) as full_name,
+                    id_card,
+                    phone_number
+             FROM Patients
+             ORDER BY first_name, last_name`
+        );
+
+        res.json({ 
+            success: true, 
+            patients: patients 
+        });
+
+    } catch (error) {
+        console.error('❌ Error fetching patients:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'เกิดข้อผิดพลาดในการดึงข้อมูลผู้ป่วย' 
+        });
+    } finally {
+        if (connection) await connection.end();
+    }
+});
+
+// ========================
+// Error Handlers (ต้องอยู่ท้ายสุดเสมอ!)
 // ========================
 
 // 404 Handler
