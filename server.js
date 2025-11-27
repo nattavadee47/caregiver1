@@ -692,32 +692,38 @@ app.post('/api/register/caregiver', async (req, res) => {
         await connection.beginTransaction();
 
         try {
-            // สร้างผู้ใช้ใหม่ (ไม่ระบุ role ให้ใช้ default)
+            // สร้างผู้ใช้ใหม่ (ใช้ default role จาก database)
             console.log('📝 Creating user with phone:', phone);
             const [userResult] = await connection.execute(
-                `INSERT INTO Users (phone, password_hash, created_at) 
-                 VALUES (?, ?, NOW())`,
+                `INSERT INTO Users (phone, password_hash) 
+                 VALUES (?, ?)`,
                 [phone, hashedPassword]
             );
 
             const userId = userResult.insertId;
             console.log('✅ User created with ID:', userId);
 
-            // Update role เป็น Caregiver
-            await connection.execute(
-                `UPDATE Users SET role = ? WHERE user_id = ?`,
-                ['Caregiver', userId]
-            );
-            console.log('✅ Role updated to Caregiver');
-
             // สร้างข้อมูลผู้ดูแล
             console.log('📝 Creating caregiver record...');
-            await connection.execute(
-                `INSERT INTO Caregivers (user_id, patient_id, relationship, contact_name, contact_phone, is_external_contact) 
-                 VALUES (?, ?, ?, ?, ?, 0)`,
-                [userId, patient_id, relationship, contact_name, phone]
+            const [caregiverResult] = await connection.execute(
+                `INSERT INTO Caregivers (user_id, relationship, contact_name, contact_phone, is_external_contact) 
+                 VALUES (?, ?, ?, ?, 0)`,
+                [userId, relationship, contact_name, phone]
             );
-            console.log('✅ Caregiver record created');
+            const caregiverId = caregiverResult.insertId;
+            console.log('✅ Caregiver record created with ID:', caregiverId);
+
+            // อัพเดทข้อมูล Emergency Contact ในตาราง Patients
+            console.log('📝 Updating patient emergency contact...');
+            await connection.execute(
+                `UPDATE Patients 
+                 SET emergency_contact_name = ?, 
+                     emergency_contact_phone = ?,
+                     emergency_contact_relation = ?
+                 WHERE patient_id = ?`,
+                [contact_name, phone, relationship, patient_id]
+            );
+            console.log('✅ Patient emergency contact updated');
 
             // Commit Transaction
             await connection.commit();
@@ -732,6 +738,11 @@ app.post('/api/register/caregiver', async (req, res) => {
         } catch (error) {
             // Rollback ถ้าเกิดข้อผิดพลาด
             console.error('❌ Transaction error:', error);
+            console.error('❌ Error details:', {
+                message: error.message,
+                code: error.code,
+                sqlState: error.sqlState
+            });
             await connection.rollback();
             throw error;
         }
