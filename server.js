@@ -692,24 +692,36 @@ app.post('/api/register/caregiver', async (req, res) => {
         await connection.beginTransaction();
 
         try {
-            // สร้างผู้ใช้ใหม่
+            // สร้างผู้ใช้ใหม่ (ไม่ระบุ role ให้ใช้ default)
+            console.log('📝 Creating user with phone:', phone);
             const [userResult] = await connection.execute(
-                `INSERT INTO Users (phone, password_hash, role, created_at) 
-                 VALUES (?, ?, 'caregiver', NOW())`,
+                `INSERT INTO Users (phone, password_hash, created_at) 
+                 VALUES (?, ?, NOW())`,
                 [phone, hashedPassword]
             );
 
             const userId = userResult.insertId;
+            console.log('✅ User created with ID:', userId);
+
+            // Update role เป็น Caregiver
+            await connection.execute(
+                `UPDATE Users SET role = ? WHERE user_id = ?`,
+                ['Caregiver', userId]
+            );
+            console.log('✅ Role updated to Caregiver');
 
             // สร้างข้อมูลผู้ดูแล
+            console.log('📝 Creating caregiver record...');
             await connection.execute(
                 `INSERT INTO Caregivers (user_id, patient_id, relationship, contact_name, contact_phone, is_external_contact) 
                  VALUES (?, ?, ?, ?, ?, 0)`,
                 [userId, patient_id, relationship, contact_name, phone]
             );
+            console.log('✅ Caregiver record created');
 
             // Commit Transaction
             await connection.commit();
+            console.log('✅ Transaction committed');
 
             res.json({ 
                 success: true, 
@@ -719,6 +731,7 @@ app.post('/api/register/caregiver', async (req, res) => {
 
         } catch (error) {
             // Rollback ถ้าเกิดข้อผิดพลาด
+            console.error('❌ Transaction error:', error);
             await connection.rollback();
             throw error;
         }
