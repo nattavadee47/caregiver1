@@ -278,17 +278,16 @@ app.post('/api/patients/search', async (req, res) => {
 
         connection = await createConnection();
         
-        // ✅ ค้นหาด้วย MySQL
+        // ✅ ค้นหาด้วย MySQL (ใช้ patient_phone ตาม schema)
         const [patients] = await connection.execute(
             `SELECT 
                 patient_id,
                 CONCAT(first_name, ' ', last_name) as full_name,
-                phone_number,
-                date_of_birth,
-                gender,
-                id_card
+                patient_phone,
+                birth_date as date_of_birth,
+                gender
              FROM Patients 
-             WHERE phone_number = ?`,
+             WHERE patient_phone = ?`,
             [patient_phone]
         );
 
@@ -307,10 +306,9 @@ app.post('/api/patients/search', async (req, res) => {
             patient: {
                 patient_id: patient.patient_id,
                 full_name: patient.full_name,
-                phone: patient.phone_number,
+                phone: patient.patient_phone,
                 dateOfBirth: patient.date_of_birth,
-                gender: patient.gender,
-                id_card: patient.id_card
+                gender: patient.gender
             }
         });
 
@@ -360,12 +358,11 @@ app.get('/api/caregiver/patients', authenticateToken, async (req, res) => {
                 p.patient_id,
                 p.first_name,
                 p.last_name,
-                p.date_of_birth,
-                p.phone_number,
-                p.address,
+                p.birth_date as date_of_birth,
+                p.patient_phone as phone_number,
                 c.relationship,
                 c.contact_name as caregiver_name,
-                DATE_FORMAT(p.date_of_birth, '%Y-%m-%d') as dob_formatted
+                DATE_FORMAT(p.birth_date, '%Y-%m-%d') as dob_formatted
             FROM Patients p
             LEFT JOIN Caregivers c ON p.patient_id = c.patient_id
             WHERE c.contact_phone = ?
@@ -406,7 +403,7 @@ app.get('/api/caregiver/patient/:patientId/dashboard', authenticateToken, async 
                 p.*,
                 c.contact_name as caregiver_name,
                 c.relationship,
-                DATE_FORMAT(p.date_of_birth, '%Y-%m-%d') as dob_formatted
+                DATE_FORMAT(p.birth_date, '%Y-%m-%d') as dob_formatted
             FROM Patients p
             LEFT JOIN Caregivers c ON p.patient_id = c.patient_id
             WHERE p.patient_id = ?
@@ -748,8 +745,7 @@ app.get('/api/patients/list', async (req, res) => {
         const [patients] = await connection.execute(
             `SELECT patient_id, 
                     CONCAT(first_name, ' ', last_name) as full_name,
-                    id_card,
-                    phone_number
+                    patient_phone as phone_number
              FROM Patients
              ORDER BY first_name, last_name`
         );
