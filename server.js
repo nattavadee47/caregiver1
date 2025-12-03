@@ -330,30 +330,10 @@ app.post('/api/patients/search', async (req, res) => {
 
 // Get patients for caregiver
 app.get('/api/caregiver/patients', authenticateToken, async (req, res) => {
-    let connection;
-    
     try {
-        console.log('👨‍👩‍👧 Loading patients for caregiver:', req.user.user_id);
+        const caregiverPhone = req.user.phone;
         
-        connection = await createConnection();
-        
-        // Get caregiver's phone first
-        const [users] = await connection.execute(
-            'SELECT phone FROM Users WHERE user_id = ?',
-            [req.user.user_id]
-        );
-
-        if (users.length === 0) {
-            return res.status(404).json({
-                success: false,
-                message: 'ไม่พบข้อมูลผู้ใช้'
-            });
-        }
-
-        const caregiverPhone = users[0].phone;
-        
-        // Get patients using caregiver's phone
-        const [patients] = await connection.execute(`
+        const [patients] = await db.execute(`
             SELECT 
                 p.patient_id,
                 p.first_name,
@@ -364,30 +344,17 @@ app.get('/api/caregiver/patients', authenticateToken, async (req, res) => {
                 c.contact_name as caregiver_name,
                 DATE_FORMAT(p.birth_date, '%Y-%m-%d') as dob_formatted
             FROM Patients p
-            LEFT JOIN Caregivers c ON p.patient_id = c.patient_id
+            INNER JOIN Caregivers c ON p.user_id = c.user_id
             WHERE c.contact_phone = ?
             ORDER BY p.first_name, p.last_name
         `, [caregiverPhone]);
 
-        console.log(`✅ Found ${patients.length} patient(s) for caregiver`);
-
-        res.json({
-            success: true,
-            data: patients,
-            count: patients.length
-        });
-
+        res.json(patients);
     } catch (error) {
         console.error('❌ Error fetching patients:', error);
-        res.status(500).json({
-            success: false,
-            message: 'เกิดข้อผิดพลาดในการดึงข้อมูลผู้ป่วย'
-        });
-    } finally {
-        if (connection) await connection.end();
+        res.status(500).json({ error: 'เกิดข้อผิดพลาดในการดึงข้อมูลผู้ป่วย' });
     }
 });
-
 // Get patient dashboard
 app.get('/api/caregiver/patient/:patientId/dashboard', authenticateToken, async (req, res) => {
     let connection;
@@ -397,15 +364,15 @@ app.get('/api/caregiver/patient/:patientId/dashboard', authenticateToken, async 
         
         connection = await createConnection();
         
-        // Get patient info
+        // Get patient info (แก้ไข: ไม่ต้อง JOIN Caregivers)
         const [patients] = await connection.execute(`
             SELECT 
                 p.*,
-                c.contact_name as caregiver_name,
-                c.relationship,
-                DATE_FORMAT(p.birth_date, '%Y-%m-%d') as dob_formatted
+                p.emergency_contact_name as caregiver_name,
+                p.emergency_contact_relation as relationship,
+                DATE_FORMAT(p.birth_date, '%Y-%m-%d') as dob_formatted,
+                TIMESTAMPDIFF(YEAR, p.birth_date, CURDATE()) as age
             FROM Patients p
-            LEFT JOIN Caregivers c ON p.patient_id = c.patient_id
             WHERE p.patient_id = ?
         `, [patientId]);
 
@@ -461,7 +428,6 @@ app.get('/api/caregiver/patient/:patientId/dashboard', authenticateToken, async 
         if (connection) await connection.end();
     }
 });
-
 // Get exercise history for patient
 app.get('/api/caregiver/patient/:patientId/exercises', authenticateToken, async (req, res) => {
     let connection;
