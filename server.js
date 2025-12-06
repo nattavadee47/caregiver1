@@ -357,7 +357,10 @@ app.get('/api/caregiver/patients', authenticateToken, async (req, res) => {
         `, [caregiverPhone]);
 
         console.log('✅ Found patients:', patients.length);
-        res.json(patients);
+        res.json({
+            success: true,
+            data: patients
+        });
     } catch (error) {
         console.error('❌ Error fetching patients:', error);
         res.status(500).json({ 
