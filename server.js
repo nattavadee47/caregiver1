@@ -345,14 +345,13 @@ app.get('/api/caregiver/patients', authenticateToken, async (req, res) => {
                 p.last_name,
                 p.birth_date as date_of_birth,
                 p.patient_phone as phone_number,
-                c.relationship,
-                c.contact_name as caregiver_name,
+                p.emergency_contact_relation as relationship,
+                p.emergency_contact_name as caregiver_name,
                 DATE_FORMAT(p.birth_date, '%Y-%m-%d') as dob_formatted,
                 TIMESTAMPDIFF(YEAR, p.birth_date, CURDATE()) as age,
                 p.gender
             FROM Patients p
-            INNER JOIN Caregivers c ON p.user_id = c.user_id
-            WHERE c.contact_phone = ?
+            WHERE p.emergency_contact_phone = ?
             ORDER BY p.first_name, p.last_name
         `, [caregiverPhone]);
 
