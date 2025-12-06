@@ -370,6 +370,48 @@ app.get('/api/caregiver/patients', authenticateToken, async (req, res) => {
         if (connection) await connection.end();
     }
 });
+// Get patient basic info (without dashboard stats)
+app.get('/api/caregiver/patient/:patientId', authenticateToken, async (req, res) => {
+    let connection;
+    
+    try {
+        const patientId = req.params.patientId;
+        
+        connection = await createConnection();
+        
+        const [patients] = await connection.execute(`
+            SELECT 
+                p.*,
+                p.emergency_contact_name as caregiver_name,
+                p.emergency_contact_relation as relationship,
+                DATE_FORMAT(p.birth_date, '%Y-%m-%d') as dob_formatted,
+                TIMESTAMPDIFF(YEAR, p.birth_date, CURDATE()) as age
+            FROM Patients p
+            WHERE p.patient_id = ?
+        `, [patientId]);
+
+        if (patients.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'ไม่พบข้อมูลผู้ป่วย'
+            });
+        }
+
+        res.json({
+            success: true,
+            data: patients[0]
+        });
+
+    } catch (error) {
+        console.error('❌ Error fetching patient:', error);
+        res.status(500).json({
+            success: false,
+            message: 'เกิดข้อผิดพลาดในการดึงข้อมูลผู้ป่วย'
+        });
+    } finally {
+        if (connection) await connection.end();
+    }
+});
 // Get patient dashboard
 app.get('/api/caregiver/patient/:patientId/dashboard', authenticateToken, async (req, res) => {
     let connection;
